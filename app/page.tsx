@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { TransactionForm } from "@/components/transaction-form"
 import { TransactionTable } from "@/components/transaction-table"
@@ -8,7 +8,7 @@ import { InvestorIncomeForm } from "@/components/investor-income-form"
 import { RacerTransactionForm } from "@/components/racer-transaction-form"
 import { ShareButton } from "@/components/share-button"
 import { Button } from "@/components/ui/button"
-import { AlertCircle, Plus } from "lucide-react"
+import { AlertCircle, Plus, Wifi, WifiOff, Users } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type { Transaction, InvestorIncome, RacerTransaction } from "@/types/transaction"
@@ -23,6 +23,7 @@ import {
   deleteInvestorIncome,
   deleteRacerTransaction,
   addSampleData,
+  subscribeToDataChanges,
 } from "@/services/database"
 import { isSupabaseConfigured } from "@/lib/supabase"
 
@@ -33,40 +34,14 @@ export default function Home() {
   const [initialBalance] = useState(0) // $0 as initial balance
   const [dataLoading, setDataLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [isConnected, setIsConnected] = useState(true)
+  const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
   const isDevelopmentMode = !isSupabaseConfigured()
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setError(null)
-        const [transactionsData, incomesData, racerTransactionsData] = await Promise.all([
-          getTransactions(),
-          getInvestorIncomes(),
-          getRacerTransactions(),
-        ])
-
-        setTransactions(transactionsData)
-        setInvestorIncomes(incomesData)
-        setRacerTransactions(racerTransactionsData)
-      } catch (error) {
-        console.error("Error fetching data:", error)
-        setError("Failed to load data. Using local storage instead.")
-        // Even if there's an error, the functions should return mock data
-        setTransactions([])
-        setInvestorIncomes([])
-        setRacerTransactions([])
-      } finally {
-        setDataLoading(false)
-      }
-    }
-
-    fetchData()
-  }, [])
-
-  const handleAddSampleData = () => {
-    addSampleData()
-    // Refresh the data
-    const fetchData = async () => {
+  // Fetch all data
+  const fetchAllData = useCallback(async () => {
+    try {
+      setError(null)
       const [transactionsData, incomesData, racerTransactionsData] = await Promise.all([
         getTransactions(),
         getInvestorIncomes(),
@@ -76,15 +51,45 @@ export default function Home() {
       setTransactions(transactionsData)
       setInvestorIncomes(incomesData)
       setRacerTransactions(racerTransactionsData)
+      setLastUpdate(new Date())
+      setIsConnected(true)
+    } catch (error) {
+      console.error("Error fetching data:", error)
+      setError("Failed to load data. Using local storage instead.")
+      setIsConnected(false)
+      // Even if there's an error, the functions should return mock data
+      setTransactions([])
+      setInvestorIncomes([])
+      setRacerTransactions([])
+    } finally {
+      setDataLoading(false)
     }
-    fetchData()
+  }, [])
+
+  // Initial data load and real-time subscription
+  useEffect(() => {
+    fetchAllData()
+
+    // Subscribe to real-time changes
+    const unsubscribe = subscribeToDataChanges(() => {
+      console.log("Real-time update detected, refreshing data...")
+      fetchAllData()
+    })
+
+    // Cleanup subscription on unmount
+    return unsubscribe
+  }, [fetchAllData])
+
+  const handleAddSampleData = () => {
+    addSampleData()
+    fetchAllData()
   }
 
   const handleAddTransaction = async (transaction: Omit<Transaction, "id">) => {
     try {
-      const newTransaction = await addTransaction(transaction)
-      setTransactions([newTransaction, ...transactions])
+      await addTransaction(transaction)
       setError(null)
+      // Real-time subscription will handle the UI update
     } catch (error) {
       console.error("Error adding transaction:", error)
       setError("Failed to add transaction")
@@ -94,8 +99,8 @@ export default function Home() {
   const handleDeleteTransaction = async (id: string) => {
     try {
       await deleteTransaction(id)
-      setTransactions(transactions.filter((t) => t.id !== id))
       setError(null)
+      // Real-time subscription will handle the UI update
     } catch (error) {
       console.error("Error deleting transaction:", error)
       setError("Failed to delete transaction")
@@ -104,9 +109,9 @@ export default function Home() {
 
   const handleAddInvestorIncome = async (income: Omit<InvestorIncome, "id">) => {
     try {
-      const newIncome = await addInvestorIncome(income)
-      setInvestorIncomes([newIncome, ...investorIncomes])
+      await addInvestorIncome(income)
       setError(null)
+      // Real-time subscription will handle the UI update
     } catch (error) {
       console.error("Error adding investor income:", error)
       setError("Failed to add investor income")
@@ -116,8 +121,8 @@ export default function Home() {
   const handleDeleteInvestorIncome = async (id: string) => {
     try {
       await deleteInvestorIncome(id)
-      setInvestorIncomes(investorIncomes.filter((i) => i.id !== id))
       setError(null)
+      // Real-time subscription will handle the UI update
     } catch (error) {
       console.error("Error deleting investor income:", error)
       setError("Failed to delete investor income")
@@ -126,9 +131,9 @@ export default function Home() {
 
   const handleAddRacerTransaction = async (transaction: Omit<RacerTransaction, "id">) => {
     try {
-      const newTransaction = await addRacerTransaction(transaction)
-      setRacerTransactions([newTransaction, ...racerTransactions])
+      await addRacerTransaction(transaction)
       setError(null)
+      // Real-time subscription will handle the UI update
     } catch (error) {
       console.error("Error adding racer transaction:", error)
       setError("Failed to add racer transaction")
@@ -138,8 +143,8 @@ export default function Home() {
   const handleDeleteRacerTransaction = async (id: string) => {
     try {
       await deleteRacerTransaction(id)
-      setRacerTransactions(racerTransactions.filter((t) => t.id !== id))
       setError(null)
+      // Real-time subscription will handle the UI update
     } catch (error) {
       console.error("Error deleting racer transaction:", error)
       setError("Failed to delete racer transaction")
@@ -181,7 +186,21 @@ export default function Home() {
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-3xl font-bold">Speed Racing Syndicate</h1>
-          <p className="text-gray-500">Financial Management System</p>
+          <div className="flex items-center gap-2 text-gray-500">
+            <span>Financial Management System</span>
+            {!isDevelopmentMode && (
+              <div className="flex items-center gap-1">
+                {isConnected ? (
+                  <Wifi className="h-4 w-4 text-green-500" />
+                ) : (
+                  <WifiOff className="h-4 w-4 text-red-500" />
+                )}
+                <span className="text-xs">
+                  {isConnected ? "Live" : "Offline"} • Last update: {lastUpdate.toLocaleTimeString()}
+                </span>
+              </div>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-4">
           {isDevelopmentMode && hasNoData && (
@@ -190,6 +209,12 @@ export default function Home() {
               Add Sample Data
             </Button>
           )}
+          {!isDevelopmentMode && (
+            <div className="flex items-center gap-2 text-sm text-gray-500">
+              <Users className="h-4 w-4" />
+              <span>Multi-user Real-time</span>
+            </div>
+          )}
           <ShareButton />
         </div>
       </div>
@@ -197,7 +222,11 @@ export default function Home() {
       <Card className="mb-8">
         <CardHeader>
           <CardTitle>Financial Management System</CardTitle>
-          <CardDescription>Manage your racing team's finances</CardDescription>
+          <CardDescription>
+            {isDevelopmentMode
+              ? "Manage your racing team's finances"
+              : "Real-time collaborative financial management - changes sync instantly across all users"}
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <Tabs defaultValue="transactions" className="w-full">

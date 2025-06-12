@@ -6,6 +6,10 @@ let mockTransactions: Transaction[] = []
 let mockInvestorIncomes: InvestorIncome[] = []
 let mockRacerTransactions: RacerTransaction[] = []
 
+// Real-time subscription callbacks
+type DataChangeCallback = () => void
+let dataChangeCallbacks: DataChangeCallback[] = []
+
 // Helper function to generate unique IDs
 const generateId = () => Date.now().toString() + Math.random().toString(36).substr(2, 9)
 
@@ -14,10 +18,59 @@ const shouldUseMockData = () => {
   return !isSupabaseConfigured()
 }
 
+// Subscribe to real-time changes
+export function subscribeToDataChanges(callback: DataChangeCallback) {
+  dataChangeCallbacks.push(callback)
+
+  const supabase = getSupabaseBrowserClient()
+  if (!supabase || shouldUseMockData()) {
+    return () => {} // Return empty cleanup function for mock mode
+  }
+
+  // Subscribe to transactions changes
+  const transactionsSubscription = supabase
+    .channel("transactions-changes")
+    .on("postgres_changes", { event: "*", schema: "public", table: "transactions" }, () => {
+      console.log("Transactions updated - refreshing data...")
+      callback()
+    })
+    .subscribe()
+
+  // Subscribe to investor incomes changes
+  const incomesSubscription = supabase
+    .channel("incomes-changes")
+    .on("postgres_changes", { event: "*", schema: "public", table: "investor_incomes" }, () => {
+      console.log("Investor incomes updated - refreshing data...")
+      callback()
+    })
+    .subscribe()
+
+  // Subscribe to racer transactions changes
+  const racerTransactionsSubscription = supabase
+    .channel("racer-transactions-changes")
+    .on("postgres_changes", { event: "*", schema: "public", table: "racer_transactions" }, () => {
+      console.log("Racer transactions updated - refreshing data...")
+      callback()
+    })
+    .subscribe()
+
+  // Return cleanup function
+  return () => {
+    supabase.removeChannel(transactionsSubscription)
+    supabase.removeChannel(incomesSubscription)
+    supabase.removeChannel(racerTransactionsSubscription)
+    dataChangeCallbacks = dataChangeCallbacks.filter((cb) => cb !== callback)
+  }
+}
+
+// Notify all callbacks about data changes (for mock mode)
+const notifyDataChange = () => {
+  dataChangeCallbacks.forEach((callback) => callback())
+}
+
 // Transactions
 export async function getTransactions() {
   if (shouldUseMockData()) {
-    // Return mock data in development mode
     return mockTransactions
   }
 
@@ -28,7 +81,7 @@ export async function getTransactions() {
   }
 
   try {
-    const { data, error } = await supabase.from("transactions").select("*").order("date", { ascending: false })
+    const { data, error } = await supabase.from("transactions").select("*").order("created_at", { ascending: false })
 
     if (error) {
       console.warn("Database error, falling back to mock data:", error.message)
@@ -44,9 +97,9 @@ export async function getTransactions() {
 
 export async function addTransaction(transaction: Omit<Transaction, "id">) {
   if (shouldUseMockData()) {
-    // Add to mock data in development mode
     const newTransaction = { ...transaction, id: generateId() } as Transaction
     mockTransactions = [newTransaction, ...mockTransactions]
+    notifyDataChange()
     return newTransaction
   }
 
@@ -55,6 +108,7 @@ export async function addTransaction(transaction: Omit<Transaction, "id">) {
     console.warn("Supabase not configured, using mock data")
     const newTransaction = { ...transaction, id: generateId() } as Transaction
     mockTransactions = [newTransaction, ...mockTransactions]
+    notifyDataChange()
     return newTransaction
   }
 
@@ -65,22 +119,25 @@ export async function addTransaction(transaction: Omit<Transaction, "id">) {
       console.warn("Database error, falling back to mock data:", error.message)
       const newTransaction = { ...transaction, id: generateId() } as Transaction
       mockTransactions = [newTransaction, ...mockTransactions]
+      notifyDataChange()
       return newTransaction
     }
 
+    // Real-time subscription will handle the UI update
     return data[0] as Transaction
   } catch (error) {
     console.warn("Failed to add transaction, using mock data:", error)
     const newTransaction = { ...transaction, id: generateId() } as Transaction
     mockTransactions = [newTransaction, ...mockTransactions]
+    notifyDataChange()
     return newTransaction
   }
 }
 
 export async function deleteTransaction(id: string) {
   if (shouldUseMockData()) {
-    // Remove from mock data in development mode
     mockTransactions = mockTransactions.filter((t) => t.id !== id)
+    notifyDataChange()
     return true
   }
 
@@ -88,6 +145,7 @@ export async function deleteTransaction(id: string) {
   if (!supabase) {
     console.warn("Supabase not configured, using mock data")
     mockTransactions = mockTransactions.filter((t) => t.id !== id)
+    notifyDataChange()
     return true
   }
 
@@ -97,13 +155,16 @@ export async function deleteTransaction(id: string) {
     if (error) {
       console.warn("Database error, falling back to mock data:", error.message)
       mockTransactions = mockTransactions.filter((t) => t.id !== id)
+      notifyDataChange()
       return true
     }
 
+    // Real-time subscription will handle the UI update
     return true
   } catch (error) {
     console.warn("Failed to delete transaction, using mock data:", error)
     mockTransactions = mockTransactions.filter((t) => t.id !== id)
+    notifyDataChange()
     return true
   }
 }
@@ -121,7 +182,10 @@ export async function getInvestorIncomes() {
   }
 
   try {
-    const { data, error } = await supabase.from("investor_incomes").select("*").order("date", { ascending: false })
+    const { data, error } = await supabase
+      .from("investor_incomes")
+      .select("*")
+      .order("created_at", { ascending: false })
 
     if (error) {
       console.warn("Database error, falling back to mock data:", error.message)
@@ -139,6 +203,7 @@ export async function addInvestorIncome(income: Omit<InvestorIncome, "id">) {
   if (shouldUseMockData()) {
     const newIncome = { ...income, id: generateId() } as InvestorIncome
     mockInvestorIncomes = [newIncome, ...mockInvestorIncomes]
+    notifyDataChange()
     return newIncome
   }
 
@@ -147,6 +212,7 @@ export async function addInvestorIncome(income: Omit<InvestorIncome, "id">) {
     console.warn("Supabase not configured, using mock data")
     const newIncome = { ...income, id: generateId() } as InvestorIncome
     mockInvestorIncomes = [newIncome, ...mockInvestorIncomes]
+    notifyDataChange()
     return newIncome
   }
 
@@ -157,6 +223,7 @@ export async function addInvestorIncome(income: Omit<InvestorIncome, "id">) {
       console.warn("Database error, falling back to mock data:", error.message)
       const newIncome = { ...income, id: generateId() } as InvestorIncome
       mockInvestorIncomes = [newIncome, ...mockInvestorIncomes]
+      notifyDataChange()
       return newIncome
     }
 
@@ -165,6 +232,7 @@ export async function addInvestorIncome(income: Omit<InvestorIncome, "id">) {
     console.warn("Failed to add investor income, using mock data:", error)
     const newIncome = { ...income, id: generateId() } as InvestorIncome
     mockInvestorIncomes = [newIncome, ...mockInvestorIncomes]
+    notifyDataChange()
     return newIncome
   }
 }
@@ -172,6 +240,7 @@ export async function addInvestorIncome(income: Omit<InvestorIncome, "id">) {
 export async function deleteInvestorIncome(id: string) {
   if (shouldUseMockData()) {
     mockInvestorIncomes = mockInvestorIncomes.filter((i) => i.id !== id)
+    notifyDataChange()
     return true
   }
 
@@ -179,6 +248,7 @@ export async function deleteInvestorIncome(id: string) {
   if (!supabase) {
     console.warn("Supabase not configured, using mock data")
     mockInvestorIncomes = mockInvestorIncomes.filter((i) => i.id !== id)
+    notifyDataChange()
     return true
   }
 
@@ -188,6 +258,7 @@ export async function deleteInvestorIncome(id: string) {
     if (error) {
       console.warn("Database error, falling back to mock data:", error.message)
       mockInvestorIncomes = mockInvestorIncomes.filter((i) => i.id !== id)
+      notifyDataChange()
       return true
     }
 
@@ -195,6 +266,7 @@ export async function deleteInvestorIncome(id: string) {
   } catch (error) {
     console.warn("Failed to delete investor income, using mock data:", error)
     mockInvestorIncomes = mockInvestorIncomes.filter((i) => i.id !== id)
+    notifyDataChange()
     return true
   }
 }
@@ -212,7 +284,10 @@ export async function getRacerTransactions() {
   }
 
   try {
-    const { data, error } = await supabase.from("racer_transactions").select("*").order("date", { ascending: false })
+    const { data, error } = await supabase
+      .from("racer_transactions")
+      .select("*")
+      .order("created_at", { ascending: false })
 
     if (error) {
       console.warn("Database error, falling back to mock data:", error.message)
@@ -230,6 +305,7 @@ export async function addRacerTransaction(transaction: Omit<RacerTransaction, "i
   if (shouldUseMockData()) {
     const newTransaction = { ...transaction, id: generateId() } as RacerTransaction
     mockRacerTransactions = [newTransaction, ...mockRacerTransactions]
+    notifyDataChange()
     return newTransaction
   }
 
@@ -238,6 +314,7 @@ export async function addRacerTransaction(transaction: Omit<RacerTransaction, "i
     console.warn("Supabase not configured, using mock data")
     const newTransaction = { ...transaction, id: generateId() } as RacerTransaction
     mockRacerTransactions = [newTransaction, ...mockRacerTransactions]
+    notifyDataChange()
     return newTransaction
   }
 
@@ -248,6 +325,7 @@ export async function addRacerTransaction(transaction: Omit<RacerTransaction, "i
       console.warn("Database error, falling back to mock data:", error.message)
       const newTransaction = { ...transaction, id: generateId() } as RacerTransaction
       mockRacerTransactions = [newTransaction, ...mockRacerTransactions]
+      notifyDataChange()
       return newTransaction
     }
 
@@ -256,6 +334,7 @@ export async function addRacerTransaction(transaction: Omit<RacerTransaction, "i
     console.warn("Failed to add racer transaction, using mock data:", error)
     const newTransaction = { ...transaction, id: generateId() } as RacerTransaction
     mockRacerTransactions = [newTransaction, ...mockRacerTransactions]
+    notifyDataChange()
     return newTransaction
   }
 }
@@ -263,6 +342,7 @@ export async function addRacerTransaction(transaction: Omit<RacerTransaction, "i
 export async function deleteRacerTransaction(id: string) {
   if (shouldUseMockData()) {
     mockRacerTransactions = mockRacerTransactions.filter((t) => t.id !== id)
+    notifyDataChange()
     return true
   }
 
@@ -270,6 +350,7 @@ export async function deleteRacerTransaction(id: string) {
   if (!supabase) {
     console.warn("Supabase not configured, using mock data")
     mockRacerTransactions = mockRacerTransactions.filter((t) => t.id !== id)
+    notifyDataChange()
     return true
   }
 
@@ -279,6 +360,7 @@ export async function deleteRacerTransaction(id: string) {
     if (error) {
       console.warn("Database error, falling back to mock data:", error.message)
       mockRacerTransactions = mockRacerTransactions.filter((t) => t.id !== id)
+      notifyDataChange()
       return true
     }
 
@@ -286,6 +368,7 @@ export async function deleteRacerTransaction(id: string) {
   } catch (error) {
     console.warn("Failed to delete racer transaction, using mock data:", error)
     mockRacerTransactions = mockRacerTransactions.filter((t) => t.id !== id)
+    notifyDataChange()
     return true
   }
 }
@@ -293,7 +376,6 @@ export async function deleteRacerTransaction(id: string) {
 // Generate a shareable link for the current application
 export async function createShareableLink() {
   if (shouldUseMockData()) {
-    // In development mode, return the current URL as shareable
     return "demo-access"
   }
 
@@ -328,7 +410,6 @@ export async function createShareableLink() {
 
 export async function validateShareableLink(shareId: string) {
   if (shouldUseMockData()) {
-    // In development mode, accept any share ID
     return true
   }
 
@@ -405,4 +486,6 @@ export function addSampleData() {
       },
     ]
   }
+
+  notifyDataChange()
 }

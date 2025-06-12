@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useParams } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { TransactionForm } from "@/components/transaction-form"
@@ -20,9 +20,11 @@ import {
   deleteTransaction,
   deleteInvestorIncome,
   deleteRacerTransaction,
+  subscribeToDataChanges,
 } from "@/services/database"
-import { Loader2, ShieldAlert, AlertCircle } from "lucide-react"
+import { Loader2, ShieldAlert, AlertCircle, Wifi, WifiOff, Users } from "lucide-react"
 import type { Transaction, InvestorIncome, RacerTransaction } from "@/types/transaction"
+import { isSupabaseConfigured } from "@/lib/supabase"
 
 export default function AccessPage() {
   const { shareId } = useParams()
@@ -33,6 +35,34 @@ export default function AccessPage() {
   const [loading, setLoading] = useState(true)
   const [isValid, setIsValid] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isConnected, setIsConnected] = useState(true)
+  const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
+  const isDevelopmentMode = !isSupabaseConfigured()
+
+  // Fetch all data
+  const fetchAllData = useCallback(async () => {
+    try {
+      setError(null)
+      const [transactionsData, incomesData, racerTransactionsData] = await Promise.all([
+        getTransactions(),
+        getInvestorIncomes(),
+        getRacerTransactions(),
+      ])
+
+      setTransactions(transactionsData)
+      setInvestorIncomes(incomesData)
+      setRacerTransactions(racerTransactionsData)
+      setLastUpdate(new Date())
+      setIsConnected(true)
+    } catch (error) {
+      console.error("Error fetching data:", error)
+      setError("Failed to load data")
+      setIsConnected(false)
+      setTransactions([])
+      setInvestorIncomes([])
+      setRacerTransactions([])
+    }
+  }, [])
 
   useEffect(() => {
     const validateAndFetchData = async () => {
@@ -43,22 +73,12 @@ export default function AccessPage() {
         setIsValid(valid)
 
         if (valid) {
-          // Fetch data if link is valid
-          const [transactionsData, incomesData, racerTransactionsData] = await Promise.all([
-            getTransactions(),
-            getInvestorIncomes(),
-            getRacerTransactions(),
-          ])
-
-          setTransactions(transactionsData)
-          setInvestorIncomes(incomesData)
-          setRacerTransactions(racerTransactionsData)
+          await fetchAllData()
         }
       } catch (error) {
         console.error("Error:", error)
         setError("Failed to load data")
         setIsValid(true) // Allow access in case of database errors
-        // Set empty arrays as fallback
         setTransactions([])
         setInvestorIncomes([])
         setRacerTransactions([])
@@ -68,12 +88,28 @@ export default function AccessPage() {
     }
 
     validateAndFetchData()
-  }, [shareId])
+
+    // Subscribe to real-time changes if valid
+    let unsubscribe: (() => void) | undefined
+
+    if (isValid) {
+      unsubscribe = subscribeToDataChanges(() => {
+        console.log("Real-time update detected in shared access, refreshing data...")
+        fetchAllData()
+      })
+    }
+
+    // Cleanup subscription on unmount
+    return () => {
+      if (unsubscribe) {
+        unsubscribe()
+      }
+    }
+  }, [shareId, fetchAllData, isValid])
 
   const handleAddTransaction = async (transaction: Omit<Transaction, "id">) => {
     try {
-      const newTransaction = await addTransaction(transaction)
-      setTransactions([newTransaction, ...transactions])
+      await addTransaction(transaction)
       setError(null)
     } catch (error) {
       console.error("Error adding transaction:", error)
@@ -84,7 +120,6 @@ export default function AccessPage() {
   const handleDeleteTransaction = async (id: string) => {
     try {
       await deleteTransaction(id)
-      setTransactions(transactions.filter((t) => t.id !== id))
       setError(null)
     } catch (error) {
       console.error("Error deleting transaction:", error)
@@ -94,8 +129,7 @@ export default function AccessPage() {
 
   const handleAddInvestorIncome = async (income: Omit<InvestorIncome, "id">) => {
     try {
-      const newIncome = await addInvestorIncome(income)
-      setInvestorIncomes([newIncome, ...investorIncomes])
+      await addInvestorIncome(income)
       setError(null)
     } catch (error) {
       console.error("Error adding investor income:", error)
@@ -106,7 +140,6 @@ export default function AccessPage() {
   const handleDeleteInvestorIncome = async (id: string) => {
     try {
       await deleteInvestorIncome(id)
-      setInvestorIncomes(investorIncomes.filter((i) => i.id !== id))
       setError(null)
     } catch (error) {
       console.error("Error deleting investor income:", error)
@@ -116,8 +149,7 @@ export default function AccessPage() {
 
   const handleAddRacerTransaction = async (transaction: Omit<RacerTransaction, "id">) => {
     try {
-      const newTransaction = await addRacerTransaction(transaction)
-      setRacerTransactions([newTransaction, ...racerTransactions])
+      await addRacerTransaction(transaction)
       setError(null)
     } catch (error) {
       console.error("Error adding racer transaction:", error)
@@ -128,7 +160,6 @@ export default function AccessPage() {
   const handleDeleteRacerTransaction = async (id: string) => {
     try {
       await deleteRacerTransaction(id)
-      setRacerTransactions(racerTransactions.filter((t) => t.id !== id))
       setError(null)
     } catch (error) {
       console.error("Error deleting racer transaction:", error)
@@ -182,14 +213,34 @@ export default function AccessPage() {
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-3xl font-bold">Speed Racing Syndicate</h1>
-          <p className="text-gray-500">Financial Management System - Shared Access</p>
+          <div className="flex items-center gap-2 text-gray-500">
+            <span>Financial Management System - Shared Access</span>
+            {!isDevelopmentMode && (
+              <div className="flex items-center gap-1">
+                {isConnected ? (
+                  <Wifi className="h-4 w-4 text-green-500" />
+                ) : (
+                  <WifiOff className="h-4 w-4 text-red-500" />
+                )}
+                <span className="text-xs">
+                  {isConnected ? "Live" : "Offline"} • Last update: {lastUpdate.toLocaleTimeString()}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 text-sm text-gray-500">
+          <Users className="h-4 w-4" />
+          <span>Real-time Sync</span>
         </div>
       </div>
 
       <Card className="mb-8">
         <CardHeader>
           <CardTitle>Financial Management System</CardTitle>
-          <CardDescription>Manage your racing team's finances</CardDescription>
+          <CardDescription>
+            Real-time collaborative access - all changes sync instantly across all users
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <Tabs defaultValue="transactions" className="w-full">
