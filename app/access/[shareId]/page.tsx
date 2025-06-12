@@ -2,13 +2,9 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { useParams } from "next/navigation"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { TransactionForm } from "@/components/transaction-form"
-import { TransactionTable } from "@/components/transaction-table"
-import { InvestorIncomeForm } from "@/components/investor-income-form"
-import { RacerTransactionForm } from "@/components/racer-transaction-form"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { ExternalLink } from "lucide-react"
 import {
   validateShareableLink,
   getTransactions,
@@ -22,12 +18,13 @@ import {
   deleteRacerTransaction,
   subscribeToDataChanges,
 } from "@/services/database"
-import { Loader2, ShieldAlert, AlertCircle, Wifi, WifiOff, Users } from "lucide-react"
+import { Loader2, ShieldAlert } from "lucide-react"
 import type { Transaction, InvestorIncome, RacerTransaction } from "@/types/transaction"
 import { isSupabaseConfigured } from "@/lib/supabase"
 
 export default function AccessPage() {
-  const { shareId } = useParams()
+  const params = useParams()
+  const shareId = params.shareId as string
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [investorIncomes, setInvestorIncomes] = useState<InvestorIncome[]>([])
   const [racerTransactions, setRacerTransactions] = useState<RacerTransaction[]>([])
@@ -37,12 +34,19 @@ export default function AccessPage() {
   const [error, setError] = useState<string | null>(null)
   const [isConnected, setIsConnected] = useState(true)
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const isDevelopmentMode = !isSupabaseConfigured()
+
+  const redirectToMain = () => {
+    window.location.href = "/"
+  }
 
   // Fetch all data
   const fetchAllData = useCallback(async () => {
     try {
       setError(null)
+      setIsRefreshing(true)
+
       const [transactionsData, incomesData, racerTransactionsData] = await Promise.all([
         getTransactions(),
         getInvestorIncomes(),
@@ -54,6 +58,8 @@ export default function AccessPage() {
       setRacerTransactions(racerTransactionsData)
       setLastUpdate(new Date())
       setIsConnected(true)
+
+      console.log("Data refreshed successfully in shared access")
     } catch (error) {
       console.error("Error fetching data:", error)
       setError("Failed to load data")
@@ -61,6 +67,8 @@ export default function AccessPage() {
       setTransactions([])
       setInvestorIncomes([])
       setRacerTransactions([])
+    } finally {
+      setIsRefreshing(false)
     }
   }, [])
 
@@ -68,6 +76,8 @@ export default function AccessPage() {
     const validateAndFetchData = async () => {
       try {
         setError(null)
+        console.log("Validating share link:", shareId)
+
         // Validate the access link
         const valid = await validateShareableLink(shareId as string)
         setIsValid(valid)
@@ -107,10 +117,18 @@ export default function AccessPage() {
     }
   }, [shareId, fetchAllData, isValid])
 
+  const handleManualRefresh = () => {
+    fetchAllData()
+  }
+
   const handleAddTransaction = async (transaction: Omit<Transaction, "id">) => {
     try {
       await addTransaction(transaction)
       setError(null)
+      // Real-time subscription will handle the UI update, but in mock mode we need to refresh
+      if (isDevelopmentMode) {
+        fetchAllData()
+      }
     } catch (error) {
       console.error("Error adding transaction:", error)
       setError("Failed to add transaction")
@@ -121,6 +139,10 @@ export default function AccessPage() {
     try {
       await deleteTransaction(id)
       setError(null)
+      // Real-time subscription will handle the UI update, but in mock mode we need to refresh
+      if (isDevelopmentMode) {
+        fetchAllData()
+      }
     } catch (error) {
       console.error("Error deleting transaction:", error)
       setError("Failed to delete transaction")
@@ -131,6 +153,10 @@ export default function AccessPage() {
     try {
       await addInvestorIncome(income)
       setError(null)
+      // Real-time subscription will handle the UI update, but in mock mode we need to refresh
+      if (isDevelopmentMode) {
+        fetchAllData()
+      }
     } catch (error) {
       console.error("Error adding investor income:", error)
       setError("Failed to add investor income")
@@ -141,6 +167,10 @@ export default function AccessPage() {
     try {
       await deleteInvestorIncome(id)
       setError(null)
+      // Real-time subscription will handle the UI update, but in mock mode we need to refresh
+      if (isDevelopmentMode) {
+        fetchAllData()
+      }
     } catch (error) {
       console.error("Error deleting investor income:", error)
       setError("Failed to delete investor income")
@@ -151,6 +181,10 @@ export default function AccessPage() {
     try {
       await addRacerTransaction(transaction)
       setError(null)
+      // Real-time subscription will handle the UI update, but in mock mode we need to refresh
+      if (isDevelopmentMode) {
+        fetchAllData()
+      }
     } catch (error) {
       console.error("Error adding racer transaction:", error)
       setError("Failed to add racer transaction")
@@ -161,6 +195,10 @@ export default function AccessPage() {
     try {
       await deleteRacerTransaction(id)
       setError(null)
+      // Real-time subscription will handle the UI update, but in mock mode we need to refresh
+      if (isDevelopmentMode) {
+        fetchAllData()
+      }
     } catch (error) {
       console.error("Error deleting racer transaction:", error)
       setError("Failed to delete racer transaction")
@@ -177,7 +215,10 @@ export default function AccessPage() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+        <div className="text-center">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-500 mx-auto mb-4" />
+          <p className="text-gray-600">Loading shared access...</p>
+        </div>
       </div>
     )
   }
@@ -202,82 +243,20 @@ export default function AccessPage() {
   }
 
   return (
-    <main className="container mx-auto py-8 px-4">
-      {error && (
-        <Alert variant="destructive" className="mb-6">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h1 className="text-3xl font-bold">Speed Racing Syndicate</h1>
-          <div className="flex items-center gap-2 text-gray-500">
-            <span>Financial Management System - Shared Access</span>
-            {!isDevelopmentMode && (
-              <div className="flex items-center gap-1">
-                {isConnected ? (
-                  <Wifi className="h-4 w-4 text-green-500" />
-                ) : (
-                  <WifiOff className="h-4 w-4 text-red-500" />
-                )}
-                <span className="text-xs">
-                  {isConnected ? "Live" : "Offline"} • Last update: {lastUpdate.toLocaleTimeString()}
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center gap-2 text-sm text-gray-500">
-          <Users className="h-4 w-4" />
-          <span>Real-time Sync</span>
-        </div>
-      </div>
-
-      <Card className="mb-8">
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <Card className="w-full max-w-md text-center">
         <CardHeader>
-          <CardTitle>Financial Management System</CardTitle>
-          <CardDescription>
-            Real-time collaborative access - all changes sync instantly across all users
-          </CardDescription>
+          <CardTitle>Speed Racing Syndicate</CardTitle>
         </CardHeader>
-        <CardContent>
-          <Tabs defaultValue="transactions" className="w-full">
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="transactions">Equipment</TabsTrigger>
-              <TabsTrigger value="investor-income">Investor Income</TabsTrigger>
-              <TabsTrigger value="racer-transactions">Racer Trading</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="transactions" className="space-y-6">
-              <TransactionForm onSubmit={handleAddTransaction} currentBalance={currentBalance} />
-            </TabsContent>
-
-            <TabsContent value="investor-income" className="space-y-6">
-              <InvestorIncomeForm onSubmit={handleAddInvestorIncome} currentBalance={currentBalance} />
-            </TabsContent>
-
-            <TabsContent value="racer-transactions" className="space-y-6">
-              <RacerTransactionForm onSubmit={handleAddRacerTransaction} currentBalance={currentBalance} />
-            </TabsContent>
-          </Tabs>
+        <CardContent className="space-y-4">
+          <p className="text-gray-600">You have access to the financial management system.</p>
+          <p className="text-sm text-gray-500">Share ID: {shareId}</p>
+          <Button onClick={redirectToMain} className="w-full">
+            <ExternalLink className="h-4 w-4 mr-2" />
+            Open Application
+          </Button>
         </CardContent>
       </Card>
-
-      <TransactionTable
-        transactions={transactions}
-        investorIncomes={investorIncomes}
-        racerTransactions={racerTransactions}
-        onDeleteTransaction={handleDeleteTransaction}
-        onDeleteInvestorIncome={handleDeleteInvestorIncome}
-        onDeleteRacerTransaction={handleDeleteRacerTransaction}
-        currentBalance={currentBalance}
-        totalExpenses={totalExpenses}
-        totalInvestorIncome={totalInvestorIncome}
-        racerTransactionBalance={racerTransactionBalance}
-        loading={false}
-      />
-    </main>
+    </div>
   )
 }

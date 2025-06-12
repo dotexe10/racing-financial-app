@@ -17,20 +17,13 @@ const createBrowserClient = () => {
 }
 
 // Create a singleton instance for client-side
-let browserClient: ReturnType<typeof createClient> | null = null
+const browserClient: ReturnType<typeof createClient> | null = null
 
 export const getSupabaseBrowserClient = () => {
-  if (isDevelopment) {
-    return null
-  }
-
-  if (!browserClient) {
-    browserClient = createBrowserClient()
-  }
-  return browserClient
+  return null // Return null for demo mode
 }
 
 // Helper function to check if Supabase is configured
-export const isSupabaseConfigured = () => {
-  return !isDevelopment
+export const isSupabaseConfigured = (): boolean => {
+  return false // Always return false for demo mode
 }

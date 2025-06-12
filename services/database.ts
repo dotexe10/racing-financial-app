@@ -1,5 +1,28 @@
-import { getSupabaseBrowserClient, isSupabaseConfigured } from "@/lib/supabase"
+import { createClient } from "@supabase/supabase-js"
 import type { Transaction, InvestorIncome, RacerTransaction } from "@/types/transaction"
+
+// Check if we're in browser environment
+const isBrowser = typeof window !== "undefined"
+
+// Supabase configuration
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+let supabase: any = null
+
+// Initialize Supabase client safely
+if (supabaseUrl && supabaseAnonKey) {
+  try {
+    supabase = createClient(supabaseUrl, supabaseAnonKey)
+  } catch (error) {
+    console.warn("Failed to initialize Supabase:", error)
+  }
+}
+
+// Check if Supabase is properly configured
+export const isSupabaseConfigured = (): boolean => {
+  return !!(supabaseUrl && supabaseAnonKey && supabase)
+}
 
 // Mock data for development mode
 let mockTransactions: Transaction[] = []
@@ -13,433 +36,94 @@ let dataChangeCallbacks: DataChangeCallback[] = []
 // Helper function to generate unique IDs
 const generateId = () => Date.now().toString() + Math.random().toString(36).substr(2, 9)
 
-// Helper function to check if we should use mock data
-const shouldUseMockData = () => {
-  return !isSupabaseConfigured()
-}
-
-// Subscribe to real-time changes
+// Subscribe to real-time changes (mock implementation)
 export function subscribeToDataChanges(callback: DataChangeCallback) {
   dataChangeCallbacks.push(callback)
-
-  const supabase = getSupabaseBrowserClient()
-  if (!supabase || shouldUseMockData()) {
-    return () => {} // Return empty cleanup function for mock mode
-  }
-
-  // Subscribe to transactions changes
-  const transactionsSubscription = supabase
-    .channel("transactions-changes")
-    .on("postgres_changes", { event: "*", schema: "public", table: "transactions" }, () => {
-      console.log("Transactions updated - refreshing data...")
-      callback()
-    })
-    .subscribe()
-
-  // Subscribe to investor incomes changes
-  const incomesSubscription = supabase
-    .channel("incomes-changes")
-    .on("postgres_changes", { event: "*", schema: "public", table: "investor_incomes" }, () => {
-      console.log("Investor incomes updated - refreshing data...")
-      callback()
-    })
-    .subscribe()
-
-  // Subscribe to racer transactions changes
-  const racerTransactionsSubscription = supabase
-    .channel("racer-transactions-changes")
-    .on("postgres_changes", { event: "*", schema: "public", table: "racer_transactions" }, () => {
-      console.log("Racer transactions updated - refreshing data...")
-      callback()
-    })
-    .subscribe()
+  console.log("Subscribed to data changes (mock mode)")
 
   // Return cleanup function
   return () => {
-    supabase.removeChannel(transactionsSubscription)
-    supabase.removeChannel(incomesSubscription)
-    supabase.removeChannel(racerTransactionsSubscription)
     dataChangeCallbacks = dataChangeCallbacks.filter((cb) => cb !== callback)
+    console.log("Unsubscribed from data changes")
   }
 }
 
-// Notify all callbacks about data changes (for mock mode)
+// Notify all callbacks about data changes
 const notifyDataChange = () => {
-  dataChangeCallbacks.forEach((callback) => callback())
+  dataChangeCallbacks.forEach((callback) => {
+    try {
+      callback()
+    } catch (error) {
+      console.error("Error in data change callback:", error)
+    }
+  })
 }
 
 // Transactions
-export async function getTransactions() {
-  if (shouldUseMockData()) {
-    return mockTransactions
-  }
-
-  const supabase = getSupabaseBrowserClient()
-  if (!supabase) {
-    console.warn("Supabase not configured, using mock data")
-    return mockTransactions
-  }
-
-  try {
-    const { data, error } = await supabase.from("transactions").select("*").order("created_at", { ascending: false })
-
-    if (error) {
-      console.warn("Database error, falling back to mock data:", error.message)
-      return mockTransactions
-    }
-
-    return data as Transaction[]
-  } catch (error) {
-    console.warn("Failed to fetch transactions, using mock data:", error)
-    return mockTransactions
-  }
+export async function getTransactions(): Promise<Transaction[]> {
+  return mockTransactions
 }
 
-export async function addTransaction(transaction: Omit<Transaction, "id">) {
-  if (shouldUseMockData()) {
-    const newTransaction = { ...transaction, id: generateId() } as Transaction
-    mockTransactions = [newTransaction, ...mockTransactions]
-    notifyDataChange()
-    return newTransaction
-  }
-
-  const supabase = getSupabaseBrowserClient()
-  if (!supabase) {
-    console.warn("Supabase not configured, using mock data")
-    const newTransaction = { ...transaction, id: generateId() } as Transaction
-    mockTransactions = [newTransaction, ...mockTransactions]
-    notifyDataChange()
-    return newTransaction
-  }
-
-  try {
-    const { data, error } = await supabase.from("transactions").insert([transaction]).select()
-
-    if (error) {
-      console.warn("Database error, falling back to mock data:", error.message)
-      const newTransaction = { ...transaction, id: generateId() } as Transaction
-      mockTransactions = [newTransaction, ...mockTransactions]
-      notifyDataChange()
-      return newTransaction
-    }
-
-    // Real-time subscription will handle the UI update
-    return data[0] as Transaction
-  } catch (error) {
-    console.warn("Failed to add transaction, using mock data:", error)
-    const newTransaction = { ...transaction, id: generateId() } as Transaction
-    mockTransactions = [newTransaction, ...mockTransactions]
-    notifyDataChange()
-    return newTransaction
-  }
+export async function addTransaction(transaction: Omit<Transaction, "id">): Promise<Transaction> {
+  const newTransaction = { ...transaction, id: generateId() } as Transaction
+  mockTransactions = [newTransaction, ...mockTransactions]
+  notifyDataChange()
+  return newTransaction
 }
 
-export async function deleteTransaction(id: string) {
-  if (shouldUseMockData()) {
-    mockTransactions = mockTransactions.filter((t) => t.id !== id)
-    notifyDataChange()
-    return true
-  }
-
-  const supabase = getSupabaseBrowserClient()
-  if (!supabase) {
-    console.warn("Supabase not configured, using mock data")
-    mockTransactions = mockTransactions.filter((t) => t.id !== id)
-    notifyDataChange()
-    return true
-  }
-
-  try {
-    const { error } = await supabase.from("transactions").delete().eq("id", id)
-
-    if (error) {
-      console.warn("Database error, falling back to mock data:", error.message)
-      mockTransactions = mockTransactions.filter((t) => t.id !== id)
-      notifyDataChange()
-      return true
-    }
-
-    // Real-time subscription will handle the UI update
-    return true
-  } catch (error) {
-    console.warn("Failed to delete transaction, using mock data:", error)
-    mockTransactions = mockTransactions.filter((t) => t.id !== id)
-    notifyDataChange()
-    return true
-  }
+export async function deleteTransaction(id: string): Promise<boolean> {
+  mockTransactions = mockTransactions.filter((t) => t.id !== id)
+  notifyDataChange()
+  return true
 }
 
 // Investor Incomes
-export async function getInvestorIncomes() {
-  if (shouldUseMockData()) {
-    return mockInvestorIncomes
-  }
-
-  const supabase = getSupabaseBrowserClient()
-  if (!supabase) {
-    console.warn("Supabase not configured, using mock data")
-    return mockInvestorIncomes
-  }
-
-  try {
-    const { data, error } = await supabase
-      .from("investor_incomes")
-      .select("*")
-      .order("created_at", { ascending: false })
-
-    if (error) {
-      console.warn("Database error, falling back to mock data:", error.message)
-      return mockInvestorIncomes
-    }
-
-    return data as InvestorIncome[]
-  } catch (error) {
-    console.warn("Failed to fetch investor incomes, using mock data:", error)
-    return mockInvestorIncomes
-  }
+export async function getInvestorIncomes(): Promise<InvestorIncome[]> {
+  return mockInvestorIncomes
 }
 
-export async function addInvestorIncome(income: Omit<InvestorIncome, "id">) {
-  if (shouldUseMockData()) {
-    const newIncome = { ...income, id: generateId() } as InvestorIncome
-    mockInvestorIncomes = [newIncome, ...mockInvestorIncomes]
-    notifyDataChange()
-    return newIncome
-  }
-
-  const supabase = getSupabaseBrowserClient()
-  if (!supabase) {
-    console.warn("Supabase not configured, using mock data")
-    const newIncome = { ...income, id: generateId() } as InvestorIncome
-    mockInvestorIncomes = [newIncome, ...mockInvestorIncomes]
-    notifyDataChange()
-    return newIncome
-  }
-
-  try {
-    const { data, error } = await supabase.from("investor_incomes").insert([income]).select()
-
-    if (error) {
-      console.warn("Database error, falling back to mock data:", error.message)
-      const newIncome = { ...income, id: generateId() } as InvestorIncome
-      mockInvestorIncomes = [newIncome, ...mockInvestorIncomes]
-      notifyDataChange()
-      return newIncome
-    }
-
-    return data[0] as InvestorIncome
-  } catch (error) {
-    console.warn("Failed to add investor income, using mock data:", error)
-    const newIncome = { ...income, id: generateId() } as InvestorIncome
-    mockInvestorIncomes = [newIncome, ...mockInvestorIncomes]
-    notifyDataChange()
-    return newIncome
-  }
+export async function addInvestorIncome(income: Omit<InvestorIncome, "id">): Promise<InvestorIncome> {
+  const newIncome = { ...income, id: generateId() } as InvestorIncome
+  mockInvestorIncomes = [newIncome, ...mockInvestorIncomes]
+  notifyDataChange()
+  return newIncome
 }
 
-export async function deleteInvestorIncome(id: string) {
-  if (shouldUseMockData()) {
-    mockInvestorIncomes = mockInvestorIncomes.filter((i) => i.id !== id)
-    notifyDataChange()
-    return true
-  }
-
-  const supabase = getSupabaseBrowserClient()
-  if (!supabase) {
-    console.warn("Supabase not configured, using mock data")
-    mockInvestorIncomes = mockInvestorIncomes.filter((i) => i.id !== id)
-    notifyDataChange()
-    return true
-  }
-
-  try {
-    const { error } = await supabase.from("investor_incomes").delete().eq("id", id)
-
-    if (error) {
-      console.warn("Database error, falling back to mock data:", error.message)
-      mockInvestorIncomes = mockInvestorIncomes.filter((i) => i.id !== id)
-      notifyDataChange()
-      return true
-    }
-
-    return true
-  } catch (error) {
-    console.warn("Failed to delete investor income, using mock data:", error)
-    mockInvestorIncomes = mockInvestorIncomes.filter((i) => i.id !== id)
-    notifyDataChange()
-    return true
-  }
+export async function deleteInvestorIncome(id: string): Promise<boolean> {
+  mockInvestorIncomes = mockInvestorIncomes.filter((i) => i.id !== id)
+  notifyDataChange()
+  return true
 }
 
 // Racer Transactions
-export async function getRacerTransactions() {
-  if (shouldUseMockData()) {
-    return mockRacerTransactions
-  }
-
-  const supabase = getSupabaseBrowserClient()
-  if (!supabase) {
-    console.warn("Supabase not configured, using mock data")
-    return mockRacerTransactions
-  }
-
-  try {
-    const { data, error } = await supabase
-      .from("racer_transactions")
-      .select("*")
-      .order("created_at", { ascending: false })
-
-    if (error) {
-      console.warn("Database error, falling back to mock data:", error.message)
-      return mockRacerTransactions
-    }
-
-    return data as RacerTransaction[]
-  } catch (error) {
-    console.warn("Failed to fetch racer transactions, using mock data:", error)
-    return mockRacerTransactions
-  }
+export async function getRacerTransactions(): Promise<RacerTransaction[]> {
+  return mockRacerTransactions
 }
 
-export async function addRacerTransaction(transaction: Omit<RacerTransaction, "id">) {
-  if (shouldUseMockData()) {
-    const newTransaction = { ...transaction, id: generateId() } as RacerTransaction
-    mockRacerTransactions = [newTransaction, ...mockRacerTransactions]
-    notifyDataChange()
-    return newTransaction
-  }
-
-  const supabase = getSupabaseBrowserClient()
-  if (!supabase) {
-    console.warn("Supabase not configured, using mock data")
-    const newTransaction = { ...transaction, id: generateId() } as RacerTransaction
-    mockRacerTransactions = [newTransaction, ...mockRacerTransactions]
-    notifyDataChange()
-    return newTransaction
-  }
-
-  try {
-    const { data, error } = await supabase.from("racer_transactions").insert([transaction]).select()
-
-    if (error) {
-      console.warn("Database error, falling back to mock data:", error.message)
-      const newTransaction = { ...transaction, id: generateId() } as RacerTransaction
-      mockRacerTransactions = [newTransaction, ...mockRacerTransactions]
-      notifyDataChange()
-      return newTransaction
-    }
-
-    return data[0] as RacerTransaction
-  } catch (error) {
-    console.warn("Failed to add racer transaction, using mock data:", error)
-    const newTransaction = { ...transaction, id: generateId() } as RacerTransaction
-    mockRacerTransactions = [newTransaction, ...mockRacerTransactions]
-    notifyDataChange()
-    return newTransaction
-  }
+export async function addRacerTransaction(transaction: Omit<RacerTransaction, "id">): Promise<RacerTransaction> {
+  const newTransaction = { ...transaction, id: generateId() } as RacerTransaction
+  mockRacerTransactions = [newTransaction, ...mockRacerTransactions]
+  notifyDataChange()
+  return newTransaction
 }
 
-export async function deleteRacerTransaction(id: string) {
-  if (shouldUseMockData()) {
-    mockRacerTransactions = mockRacerTransactions.filter((t) => t.id !== id)
-    notifyDataChange()
-    return true
-  }
-
-  const supabase = getSupabaseBrowserClient()
-  if (!supabase) {
-    console.warn("Supabase not configured, using mock data")
-    mockRacerTransactions = mockRacerTransactions.filter((t) => t.id !== id)
-    notifyDataChange()
-    return true
-  }
-
-  try {
-    const { error } = await supabase.from("racer_transactions").delete().eq("id", id)
-
-    if (error) {
-      console.warn("Database error, falling back to mock data:", error.message)
-      mockRacerTransactions = mockRacerTransactions.filter((t) => t.id !== id)
-      notifyDataChange()
-      return true
-    }
-
-    return true
-  } catch (error) {
-    console.warn("Failed to delete racer transaction, using mock data:", error)
-    mockRacerTransactions = mockRacerTransactions.filter((t) => t.id !== id)
-    notifyDataChange()
-    return true
-  }
+export async function deleteRacerTransaction(id: string): Promise<boolean> {
+  mockRacerTransactions = mockRacerTransactions.filter((t) => t.id !== id)
+  notifyDataChange()
+  return true
 }
 
-// Generate a shareable link for the current application
-export async function createShareableLink() {
-  if (shouldUseMockData()) {
-    return "demo-access"
-  }
-
-  const supabase = getSupabaseBrowserClient()
-  if (!supabase) {
-    console.warn("Supabase not configured, using demo link")
-    return "demo-access"
-  }
-
-  try {
-    const shareId = crypto.randomUUID()
-
-    const { error } = await supabase.from("shared_access").insert([
-      {
-        share_id: shareId,
-        created_at: new Date().toISOString(),
-        expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days
-      },
-    ])
-
-    if (error) {
-      console.warn("Database error creating share link, using demo link:", error.message)
-      return "demo-access"
-    }
-
-    return shareId
-  } catch (error) {
-    console.warn("Failed to create share link, using demo link:", error)
-    return "demo-access"
-  }
+// Generate a shareable link
+export async function createShareableLink(): Promise<string> {
+  return "demo-access-" + Math.random().toString(36).substring(2, 15)
 }
 
-export async function validateShareableLink(shareId: string) {
-  if (shouldUseMockData()) {
-    return true
-  }
-
-  const supabase = getSupabaseBrowserClient()
-  if (!supabase) {
-    console.warn("Supabase not configured, allowing access")
-    return true
-  }
-
-  try {
-    const { data, error } = await supabase.from("shared_access").select("*").eq("share_id", shareId).single()
-
-    if (error) {
-      console.warn("Database error validating share link, allowing access:", error.message)
-      return true
-    }
-
-    // Check if link is expired
-    if (new Date(data.expires_at) < new Date()) {
-      return false
-    }
-
-    return true
-  } catch (error) {
-    console.warn("Failed to validate share link, allowing access:", error)
-    return true
-  }
+export async function validateShareableLink(shareId: string): Promise<boolean> {
+  // Always return true for demo mode
+  return true
 }
 
-// Add some sample data for demonstration
+// Add sample data
 export function addSampleData() {
   if (mockTransactions.length === 0) {
     mockTransactions = [
